@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>即時互動文字雲意見調查</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- WordCloud2.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/wordcloud@1.2.2/src/wordcloud2.min.js"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+    body {
+      font-family: 'Noto Sans TC', sans-serif;
+    }
+    #word-cloud-canvas {
+      width: 100%;
+      height: 100%;
+      min-height: 380px;
+    }
+    .pulse-dot {
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.2); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col justify-between">
+
+  <!-- 頂部導航欄 -->
+  <header class="bg-indigo-600 text-white shadow-md">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex flex-wrap justify-between items-center gap-2">
+      <div class="flex items-center space-x-3">
+        <i class="fa-solid font-bold text-2xl fa-cloud"></i>
+        <h1 class="text-xl md:text-2xl font-bold tracking-wide">跨平臺即時文字雲調查</h1>
+      </div>
+      <div class="flex items-center space-x-2 text-xs md:text-sm bg-indigo-700/60 px-3 py-1.5 rounded-full border border-indigo-500/40">
+        <span id="sync-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-dot inline-block"></span>
+        <span id="sync-status">雲端同步中 (4s)</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6 w-full flex-grow space-y-6">
+
+    <!-- API 設定提示與排錯區 -->
+    <div id="api-config-card" class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg shadow-sm">
+      <div class="flex items-start justify-between">
+        <div class="flex-grow space-y-2">
+          <h3 class="text-amber-800 font-bold text-sm flex items-center gap-1.5">
+            <i class="fa-solid fa-gear"></i> 設定 Google Apps Script Web App API 網址
+          </h3>
+          <p class="text-xs text-amber-700">請貼上您部署獲得的 Web App URL（結尾須為 <code class="bg-amber-100 px-1 rounded">/exec</code>）：</p>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input type="text" id="api-url-input" placeholder="https://script.google.com/macros/s/AKfycb.../exec" class="flex-grow text-xs p-2.5 border rounded-lg border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white">
+            <div class="flex gap-2">
+              <button onclick="saveApiUrl()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-4 py-2.5 rounded-lg font-medium whitespace-nowrap shadow-sm transition">儲存並連線</button>
+              <button onclick="enableDemoMode()" class="bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs px-3 py-2.5 rounded-lg font-medium whitespace-nowrap transition">體驗展示模式</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Failed to fetch 診斷指南卡片 -->
+    <div id="fetch-error-card" class="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-800 hidden space-y-2">
+      <div class="flex items-center justify-between font-bold text-sm text-rose-900 border-b border-rose-200/60 pb-2">
+        <span class="flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-rose-600"></i> 連線至 API 失敗 (Failed to fetch) 診斷對策：</span>
+        <button onclick="document.getElementById('fetch-error-card').classList.add('hidden')" class="text-rose-500 hover:text-rose-800"><i class="fa-solid fa-xmark text-base"></i></button>
+      </div>
+      <ol class="list-decimal list-inside space-y-1 text-slate-700">
+        <li><strong>權限未開放：</strong>在 Google Apps Script 右上角點選「部署」➔「管理部署」➔「誰有權限存取」必須設定為 <strong>「所有人 (Anyone)」</strong>。</li>
+        <li><strong>使用了測試網址：</strong>請確認網址結尾為 <code class="bg-rose-100 px-1 rounded text-rose-900 font-mono">/exec</code>，而非 <code class="bg-rose-100 px-1 rounded font-mono">/dev</code>。</li>
+        <li><strong>重新發布部署：</strong>修改 Apps Script 程式碼後，必須點選「部署」➔「新增部署」並更換新網址。</li>
+      </ol>
+      <div class="pt-1 flex gap-2">
+        <button onclick="fetchCloudData(true)" class="bg-rose-600 text-white font-medium px-3 py-1.5 rounded hover:bg-rose-700 transition">重新嘗試連線</button>
+        <button onclick="enableDemoMode()" class="bg-rose-100 text-rose-800 font-medium px-3 py-1.5 rounded hover:bg-rose-200 transition">切換至展示模式體驗</button>
+      </div>
+    </div>
+
+    <!-- 題目宣示卡片 -->
+    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 text-center relative overflow-hidden">
+      <div class="absolute top-0 left-0 w-2 h-full bg-indigo-500"></div>
+      <span class="inline-block px-3 py-1 bg-indigo-50 text-indigo-600 rounded-full text-xs font-semibold tracking-wider uppercase mb-2">本次調查問題</span>
+      <h2 id="survey-question" class="text-xl md:text-2xl font-bold text-slate-800">
+        「今天的課程，你最有感的是什麼？」
+      </h2>
+    </div>
+
+    <!-- 意見輸入區卡片 -->
+    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
+      <form id="opinion-form" onsubmit="submitOpinion(event)" class="space-y-4">
+        <div>
+          <label for="user-response" class="block text-sm font-semibold text-slate-700 mb-1">
+            分享您的想法／關鍵字（可多次送出）：
+          </label>
+          <div class="flex flex-col sm:flex-row gap-2">
+            <input type="text" id="user-response" required placeholder="例如：互動討論、實作練習、說明清晰..." maxLength="50"
+              class="flex-grow px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-slate-800">
+            <button type="submit" id="submit-btn" class="bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold px-6 py-3 rounded-xl shadow-md transition duration-150 flex items-center justify-center gap-2 whitespace-nowrap">
+              <i class="fa-solid fa-paper-plane"></i>
+              <span>送出意見</span>
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <!-- 訊息反饋通知 -->
+      <div id="toast-message" class="hidden mt-3 p-3 rounded-xl text-sm font-medium flex items-center justify-between">
+        <span id="toast-text"></span>
+        <button onclick="hideToast()" class="text-xs opacity-70 hover:opacity-100"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+
+    <!-- 文字雲與數據展示區 -->
+    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+      <div class="flex flex-wrap justify-between items-center gap-2 pb-3 border-b border-slate-100">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-chart-pie text-indigo-600 text-lg"></i>
+          <h3 class="font-bold text-slate-800">即時共同文字雲</h3>
+          <span id="demo-badge" class="hidden text-xs bg-amber-100 text-amber-800 font-semibold px-2 py-0.5 rounded">展示模式</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs bg-slate-100 text-slate-600 px-3 py-1.5 rounded-full font-medium">
+            已收到 <strong id="total-responses-count" class="text-indigo-600 text-sm">0</strong> 筆意見
+          </span>
+          <button onclick="fetchCloudData(true)" class="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-indigo-600 transition" title="立即重新整理">
+            <i id="refresh-icon" class="fa-solid fa-rotate"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 文字雲畫布容器 -->
+      <div class="relative bg-slate-50 border border-slate-100 rounded-xl p-2 min-h-[380px] flex items-center justify-center">
+        <div id="loading-spinner" class="absolute inset-0 bg-slate-50/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+          <i class="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-600"></i>
+          <span class="text-xs text-slate-500 mt-2">正在載入雲端文字資料...</span>
+        </div>
+        <div id="empty-state" class="hidden text-center text-slate-400 py-12">
+          <i class="fa-solid fa-comment-dots text-4xl mb-2 opacity-50"></i>
+          <p class="text-sm">目前尚無意見，快成為第一個填寫的人吧！</p>
+        </div>
+        <!-- WordCloud2 渲染 Canvas -->
+        <canvas id="word-cloud-canvas"></canvas>
+      </div>
+
+      <!-- 文字雲過濾與設定展開區 -->
+      <details class="group bg-slate-50 rounded-xl border border-slate-200/80">
+        <summary class="flex justify-between items-center p-3 text-xs font-semibold text-slate-600 cursor-pointer select-none">
+          <span class="flex items-center gap-1.5"><i class="fa-solid fa-sliders"></i> 文字雲過濾設定 (停用詞 / 最小詞頻)</span>
+          <i class="fa-solid fa-chevron-down group-open:rotate-180 transition-transform"></i>
+        </summary>
+        <div class="p-4 pt-0 space-y-3 text-xs border-t border-slate-200/60 mt-1">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block font-medium text-slate-700 mb-1">自訂停用詞 (用逗號隔開)：</label>
+              <input type="text" id="custom-stop-words" value="我, 的, 是, 了, 有, 很, 也, 在, 不, 人, 都, 一, 就, 與, 和, 這, 那, 對, 等"
+                onchange="updateWordCloud()"
+                class="w-full p-2 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+            </div>
+            <div>
+              <label class="block font-medium text-slate-700 mb-1">最小出現次數 (低於此頻率不顯示)：</label>
+              <input type="number" id="min-count-filter" value="1" min="1" max="10"
+                onchange="updateWordCloud()"
+                class="w-full p-2 border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white">
+            </div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+  </main>
+
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400">
+    <p>匿名問卷系統 ‧ 資料安全儲存於雲端試算表</p>
+  </footer>
+
+  <script>
+    // ==========================================
+    // 1. 基本設定與全域變數
+    // ==========================================
+    const DEFAULT_GAS_API_URL = "https://script.google.com/macros/s/AKfycbzxxxxxx/exec";
+
+    let rawResponses = []; 
+    let pollingTimer = null;
+    let errorCount = 0;
+    let isDemoMode = false;
+    let deviceId = getOrCreateDeviceId();
+
+    function getOrCreateDeviceId() {
+      let id = localStorage.getItem('survey_device_id');
+      if (!id) {
+        id = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+        localStorage.setItem('survey_device_id', id);
+      }
+      return id;
+    }
+
+    function getApiUrl() {
+      return localStorage.getItem('custom_gas_api_url') || DEFAULT_GAS_API_URL;
+    }
+
+    function saveApiUrl() {
+      const url = document.getElementById('api-url-input').value.trim();
+      if (url) {
+        if (!url.startsWith('https://script.google.com/macros/s/')) {
+          showToast("網址格式不正確！應為 https://script.google.com/macros/s/.../exec", "error");
+          return;
+        }
+        localStorage.setItem('custom_gas_api_url', url);
+        isDemoMode = false;
+        document.getElementById('demo-badge').classList.add('hidden');
+        document.getElementById('fetch-error-card').classList.add('hidden');
+        showToast("API 網址已儲存！正在連接雲端...", "success");
+        errorCount = 0;
+        fetchCloudData(true);
+      }
+    }
+
+    function enableDemoMode() {
+      isDemoMode = true;
+      document.getElementById('demo-badge').classList.remove('hidden');
+      document.getElementById('fetch-error-card').classList.add('hidden');
+      document.getElementById('loading-spinner').classList.add('hidden');
+      
+      // 載入預設測試範例數據
+      rawResponses = [
+        { response: "實作練習" }, { response: "實作練習" }, { response: "實作練習" },
+        { response: "互動討論" }, { response: "互動討論" }, { response: "說明清晰" },
+        { response: "說明清晰" }, { response: "說明清晰" }, { response: "跨平臺整合" },
+        { response: "跨平臺整合" }, { response: "收穫滿滿" }, { response: "生動有趣" },
+        { response: "實用工具" }, { response: "範例豐富" }, { response: "節奏明快" }
+      ];
+      
+      document.getElementById('total-responses-count').innerText = rawResponses.length;
+      updateWordCloud();
+      showToast("已切換至「展示模式」，您可以隨時在頂部輸入正確 API 網址儲存！", "success");
+    }
+
+    // ==========================================
+    // 2. 向雲端抓取資料 (GET)
+    // ==========================================
+    async function fetchCloudData(showRefreshAnimation = false) {
+      if (isDemoMode) {
+        if (showRefreshAnimation) updateWordCloud();
+        return;
+      }
+
+      const apiUrl = getApiUrl();
+      const refreshIcon = document.getElementById('refresh-icon');
+
+      if (!apiUrl || apiUrl.includes("AKfycbzxxxxxx")) {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        return;
+      }
+
+      if (showRefreshAnimation && refreshIcon) {
+        refreshIcon.classList.add('fa-spin');
+      }
+
+      try {
+        const response = await fetch(apiUrl, { method: 'GET' });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP 狀態碼錯誤: ${response.status}`);
+        }
+
+        const json = await response.json();
+
+        if (json.status === 'success') {
+          rawResponses = json.data || [];
+          document.getElementById('total-responses-count').innerText = json.total || rawResponses.length;
+          document.getElementById('fetch-error-card').classList.add('hidden');
+          errorCount = 0;
+          updateWordCloud();
+        } else {
+          console.error("API 回傳錯誤：", json.message);
+        }
+      } catch (err) {
+        console.error("無法連線至雲端資料庫：", err);
+        errorCount++;
+
+        // 連續失敗時顯示明確排錯指引
+        if (errorCount >= 1) {
+          document.getElementById('fetch-error-card').classList.remove('hidden');
+          document.getElementById('sync-status').innerText = "連線中斷";
+          document.getElementById('sync-dot').className = "w-2.5 h-2.5 rounded-full bg-rose-500 inline-block";
+        }
+      } flex: {
+        document.getElementById('loading-spinner').classList.add('hidden');
+        if (refreshIcon) refreshIcon.classList.remove('fa-spin');
+      }
+    }
+
+    // ==========================================
+    // 3. 送出意見至雲端 (POST)
+    // ==========================================
+    async function submitOpinion(event) {
+      event.preventDefault();
+      const inputEl = document.getElementById('user-response');
+      const submitBtn = document.getElementById('submit-btn');
+      const text = inputEl.value.trim();
+      const apiUrl = getApiUrl();
+
+      if (!text) return;
+
+      if (isDemoMode) {
+        rawResponses.push({ response: text, device_id: deviceId });
+        document.getElementById('total-responses-count').innerText = rawResponses.length;
+        inputEl.value = '';
+        updateWordCloud();
+        showToast("已以【展示模式】成功新增意見！", "success");
+        return;
+      }
+
+      if (!apiUrl || apiUrl.includes("AKfycbzxxxxxx")) {
+        showToast("請先在頂部輸入正確的 Google Apps Script API 網址！", "error");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+      submitBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>傳送中...</span>`;
+
+      try {
+        const payload = JSON.stringify({
+          response: text,
+          device_id: deviceId
+        });
+
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          body: payload,
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          }
+        });
+
+        const result = await res.json();
+
+        if (result.status === 'success') {
+          inputEl.value = '';
+          showToast("謝謝你的意見！已成功送出到雲端。", "success");
+          fetchCloudData(true);
+        } else {
+          showToast("送出失敗：" + (result.message || "請稍後再試"), "error");
+        }
+      } catch (err) {
+        console.error("送出失敗：", err);
+        showToast("無法連線至雲端，請檢查 Apps Script 的「誰有權限存取」是否已設為「所有人」。", "error");
+        document.getElementById('fetch-error-card').classList.remove('hidden');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        submitBtn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> <span>送出意見</span>`;
+      }
+    }
+
+    // ==========================================
+    // 4. 中文分詞與詞頻統計
+    // ==========================================
+    function processWordFrequencies() {
+      const stopWordsInput = document.getElementById('custom-stop-words').value;
+      const stopWordsList = stopWordsInput.split(/[,，\s]+/).filter(w => w.trim().length > 0);
+      const minCount = parseInt(document.getElementById('min-count-filter').value) || 1;
+
+      const wordCounts = {};
+
+      rawResponses.forEach(item => {
+        const text = item.response;
+        if (!text) return;
+
+        const cleanText = text.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'，。！？：；（）「」『』\n\r]/g, " ");
+        const rawTokens = cleanText.split(/\s+/).filter(t => t.length > 0);
+
+        rawTokens.forEach(token => {
+          if (token.length <= 8) {
+            addWordToCount(token, wordCounts, stopWordsList);
+          } else {
+            for (let len = 2; len <= 4; len++) {
+              for (let i = 0; i <= token.length - len; i++) {
+                const subWord = token.substring(i, i + len);
+                addWordToCount(subWord, wordCounts, stopWordsList);
+              }
+            }
+          }
+        });
+      });
+
+      return Object.keys(wordCounts)
+        .filter(word => wordCounts[word] >= minCount)
+        .map(word => [word, wordCounts[word]])
+        .sort((a, b) => b[1] - a[1]);
+    }
+
+    function addWordToCount(word, countsObj, stopWords) {
+      word = word.trim();
+      if (word.length < 1) return;
+      if (stopWords.includes(word)) return;
+      if (/^\d+$/.test(word)) return;
+      countsObj[word] = (countsObj[word] || 0) + 1;
+    }
+
+    // ==========================================
+    // 5. 繪製文字雲 Canvas
+    // ==========================================
+    function updateWordCloud() {
+      const canvas = document.getElementById('word-cloud-canvas');
+      const emptyState = document.getElementById('empty-state');
+      const wordList = processWordFrequencies();
+
+      if (wordList.length === 0) {
+        emptyState.classList.remove('hidden');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      } else {
+        emptyState.classList.add('hidden');
+      }
+
+      const container = canvas.parentElement;
+      canvas.width = container.clientWidth;
+      canvas.height = Math.max(380, container.clientHeight);
+
+      const maxFreq = wordList[0][1];
+      const weightFactor = maxFreq > 1 ? (32 / Math.sqrt(maxFreq)) : 24;
+      const colors = ['#4f46e5', '#0284c7', '#0d9488', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#2563eb'];
+
+      WordCloud(canvas, {
+        list: wordList,
+        gridSize: 8,
+        weightFactor: function (size) {
+          return Math.max(14, Math.sqrt(size) * weightFactor);
+        },
+        fontFamily: 'Noto Sans TC, sans-serif',
+        color: function () {
+          return colors[Math.floor(Math.random() * colors.length)];
+        },
+        rotateRatio: 0.3,
+        rotationSteps: 2,
+        backgroundColor: 'transparent',
+        drawOutOfBound: false,
+        shrinkToFit: true
+      });
+    }
+
+    // ==========================================
+    // 6. UI 反饋與訊息提示
+    // ==========================================
+    function showToast(message, type = "success") {
+      const toast = document.getElementById('toast-message');
+      const toastText = document.getElementById('toast-text');
+
+      toastText.innerText = message;
+      toast.classList.remove('hidden', 'bg-emerald-100', 'text-emerald-800', 'bg-rose-100', 'text-rose-800');
+
+      if (type === "success") {
+        toast.classList.add('bg-emerald-100', 'text-emerald-800');
+      } else {
+        toast.classList.add('bg-rose-100', 'text-rose-800');
+      }
+
+      setTimeout(() => {
+        hideToast();
+      }, 5000);
+    }
+
+    function hideToast() {
+      document.getElementById('toast-message').classList.add('hidden');
+    }
+
+    // ==========================================
+    // 7. 初始化與自動 Polling 觸發
+    // ==========================================
+    window.onload = function () {
+      const savedApi = localStorage.getItem('custom_gas_api_url');
+      if (savedApi) {
+        document.getElementById('api-url-input').value = savedApi;
+        fetchCloudData();
+      } else {
+        // 若尚未設定，預設啟用展示模式讓使用者能直接操作體驗
+        enableDemoMode();
+      }
+
+      pollingTimer = setInterval(() => {
+        if (!isDemoMode && errorCount < 3) {
+          fetchCloudData(false);
+        }
+      }, 4000);
+
+      window.addEventListener('resize', () => {
+        updateWordCloud();
+      });
+    };
+  </script>
+</body>
+</html>
